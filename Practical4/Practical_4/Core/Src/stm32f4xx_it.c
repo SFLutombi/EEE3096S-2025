@@ -84,7 +84,11 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
-
+  // Light PB7 to indicate HardFault
+  RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
+  GPIOB->MODER &= ~(GPIO_MODER_MODER7);
+  GPIOB->MODER |= GPIO_MODER_MODER7_0;
+  GPIOB->BSRR = GPIO_BSRR_BS7;
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
   {

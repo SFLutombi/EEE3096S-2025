@@ -1,0 +1,9 @@
+Wav/
+Debug/
+Release/
+.settings/
+.mxproject
+.cproject
+.project
+.DS_Store
+Thumbs.db

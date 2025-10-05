@@ -33,10 +33,10 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-// TODO: Add values for below variables
-#define NS        // Number of samples in LUT
-#define TIM2CLK   // STM Clock frequency: Hint You might want to check the ioc file
-#define F_SIGNAL  	// Frequency of output analog signal
+// Configuration values
+#define NS             256U           // Number of samples in LUT (>= 128)
+#define TIM2CLK        16000000UL     // TIM2 clock frequency (see .ioc)
+#define F_SIGNAL       440UL          // Output analog signal frequency (Hz)
 
 /* USER CODE END PD */
 
@@ -51,20 +51,24 @@ TIM_HandleTypeDef htim3;
 DMA_HandleTypeDef hdma_tim2_ch1;
 
 /* USER CODE BEGIN PV */
-// TODO: Add code for global variables, including LUTs
-uint32_t Sin_LUT[NS] = {};
-uint32_t Saw_LUT[NS] = {};
-uint32_t Triangle_LUT[NS] = {};
-uint32_t Piano_LUT = {};
-uint32_t Guitar_LUT = {};
-uint32_t Drum_LUT = {};
+// Lookup tables (12-bit: 0..4095)
+uint32_t Sin_LUT[NS];
+uint32_t Saw_LUT[NS];
+uint32_t Triangle_LUT[NS];
+uint32_t Piano_LUT[NS];
+uint32_t Guitar_LUT[NS];
+uint32_t Drum_LUT[NS];
+
+// Current waveform selection
+static volatile uint8_t g_wave_index = 0;  // 0..5
+static volatile uint32_t *g_current_lut = Sin_LUT;
 
 
 
 
 
-// TODO: Equation to calculate TIM2_Ticks
-uint32_t TIM2_Ticks = 0; // How often to write new LUT value
+// Equation to calculate TIM2_Ticks: TIM2CLK / (NS * F_SIGNAL)
+uint32_t TIM2_Ticks = (uint32_t)((TIM2CLK + (NS * F_SIGNAL / 2)) / (NS * F_SIGNAL)); // rounded
 uint32_t DestAddress = (uint32_t) &(TIM3->CCR3); // Write LUT TO TIM3->CCR3 to modify PWM duty cycle
 
 
@@ -83,6 +87,51 @@ void EXTI0_IRQHandler(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+#include <math.h>
+
+static void Generate_LUTs(void){
+  for (uint32_t i = 0; i < NS; i++){
+    float phase = (2.0f * 3.14159265358979f * (float)i) / (float)NS;
+
+    // Sine 0..4095
+    float s = sinf(phase);
+    Sin_LUT[i] = (uint32_t)(2047.5f * (s + 1.0f));
+
+    // Saw 0..4095
+    Saw_LUT[i] = (uint32_t)((4095.0f * (float)i) / (float)(NS - 1));
+
+    // Triangle 0..4095
+    if (i < (NS/2)){
+      Triangle_LUT[i] = (uint32_t)((4095.0f * (2.0f * (float)i)) / (float)(NS - 1));
+    } else {
+      float j = (float)(i - NS/2);
+      Triangle_LUT[i] = (uint32_t)(4095.0f - (4095.0f * (2.0f * j)) / (float)(NS - 1));
+    }
+
+    // Placeholder musical timbres (replace with .wav-derived tables for Task 1.2)
+    float piano = 0.8f * sinf(phase) + 0.2f * sinf(2.0f * phase);
+    Piano_LUT[i] = (uint32_t)(2047.5f * (piano + 1.0f));
+
+    float guitar = 0.7f * sinf(phase) + 0.2f * sinf(3.0f * phase) + 0.1f * sinf(5.0f * phase);
+    Guitar_LUT[i] = (uint32_t)(2047.5f * (guitar + 1.0f));
+
+    float drum = 0.6f * sinf(phase) + 0.25f * sinf(2.7f * phase) + 0.15f * sinf(5.3f * phase);
+    Drum_LUT[i] = (uint32_t)(2047.5f * (drum + 1.0f));
+  }
+}
+
+static const char* WaveName(uint8_t idx){
+  switch(idx){
+    case 0: return "Sine";
+    case 1: return "Saw";
+    case 2: return "Tri";
+    case 3: return "Piano";
+    case 4: return "Guitar";
+    case 5: return "Drum";
+    default: return "?";
+  }
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -93,6 +142,21 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
+  // Boot indicator: brief PB7 blinks using direct registers (no HAL)
+  // Enable GPIOB clock
+  RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
+  // Set PB7 as output
+  GPIOB->MODER &= ~(GPIO_MODER_MODER7);
+  GPIOB->MODER |= GPIO_MODER_MODER7_0;
+  // Blink a few times
+  for (volatile uint32_t k = 0; k < 3; ++k){
+    // PB7 high
+    GPIOB->BSRR = GPIO_BSRR_BS7;
+    for (volatile uint32_t d = 0; d < 200000; ++d) { __NOP(); }
+    // PB7 low
+    GPIOB->BSRR = GPIO_BSRR_BR7;
+    for (volatile uint32_t d = 0; d < 200000; ++d) { __NOP(); }
+  }
 
   /* USER CODE END 1 */
 
@@ -118,15 +182,27 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-  // TODO: Start TIM3 in PWM mode on channel 3
+  Generate_LUTs();
+  g_wave_index = 0;
+  g_current_lut = Sin_LUT;
 
-  // TODO: Start TIM2 in Output Compare (OC) mode on channel 1
+  // Initialize LCD and print waveform name
+  init_LCD();
+  lcd_command(CLEAR);
+  lcd_putstring("Wave: ");
+  lcd_putstring((char*)WaveName(g_wave_index));
 
-  // TODO: Start DMA in IT mode on TIM2->CH1. Source is LUT and Dest is TIM3->CCR3; start with Sine LUT
+  // Start PWM on TIM3 CH3
+  if (HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_3) != HAL_OK) { Error_Handler(); }
 
-  // TODO: Write current waveform to LCD(Sine is the first waveform)
+  // Start TIM2 OC on CH1
+  if (HAL_TIM_OC_Start(&htim2, TIM_CHANNEL_1) != HAL_OK) { Error_Handler(); }
 
-  // TODO: Enable DMA (start transfer from LUT to CCR)
+  // Start DMA circular transfer: LUT -> TIM3->CCR3
+  if (HAL_DMA_Start_IT(&hdma_tim2_ch1, (uint32_t)g_current_lut, DestAddress, NS) != HAL_OK) { Error_Handler(); }
+
+  // Enable TIM2 CC1 DMA request
+  __HAL_TIM_ENABLE_DMA(&htim2, TIM_DMA_CC1);
 
   /* USER CODE END 2 */
 
@@ -137,6 +213,13 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    // Heartbeat blink every ~250ms
+    static uint32_t last_toggle = 0;
+    uint32_t now = HAL_GetTick();
+    if ((now - last_toggle) >= 250U) {
+      last_toggle = now;
+      HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_7);
+    }
   }
   /* USER CODE END 3 */
 }
@@ -351,6 +434,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
 
   // -------------------------------
   // LCD pins configuration
@@ -388,20 +472,57 @@ static void MX_GPIO_Init(void)
   HAL_NVIC_SetPriority(EXTI0_IRQn, 2, 0);
   HAL_NVIC_EnableIRQ(EXTI0_IRQn);
 
+  // -------------------------------
+  // Heartbeat LED on PB7 (unused pin)
+  // -------------------------------
+  GPIO_InitStruct.Pin = GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
+
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
 void EXTI0_IRQHandler(void){
 
-	// TODO: Debounce using HAL_GetTick()
+	// Debounce using HAL_GetTick()
+	static uint32_t last = 0;
+	uint32_t now = HAL_GetTick();
+	if ((now - last) < 150) { // ~150ms debounce
+		HAL_GPIO_EXTI_IRQHandler(Button0_Pin); // Clear interrupt flags
+		return;
+	}
+	last = now;
 
+	// Disable DMA request and abort current transfer
+	__HAL_TIM_DISABLE_DMA(&htim2, TIM_DMA_CC1);
+	HAL_DMA_Abort(&hdma_tim2_ch1);
 
-	// TODO: Disable DMA transfer and abort IT, then start DMA in IT mode with new LUT and re-enable transfer
-	// HINT: Consider using C's "switch" function to handle LUT changes
+	// Cycle waveform index and select new LUT
+	g_wave_index = (uint8_t)((g_wave_index + 1) % 6);
+	switch(g_wave_index){
+		case 0: g_current_lut = Sin_LUT; break;
+		case 1: g_current_lut = Saw_LUT; break;
+		case 2: g_current_lut = Triangle_LUT; break;
+		case 3: g_current_lut = Piano_LUT; break;
+		case 4: g_current_lut = Guitar_LUT; break;
+		case 5: g_current_lut = Drum_LUT; break;
+		default: g_current_lut = Sin_LUT; break;
+	}
 
+	// Update LCD with current waveform name
+	lcd_command(CLEAR);
+	lcd_putstring("Wave: ");
+	lcd_putstring((char*)WaveName(g_wave_index));
 
-
+	// Restart DMA with the new source LUT and re-enable TIM2 CC1 DMA
+	if (HAL_DMA_Start_IT(&hdma_tim2_ch1, (uint32_t)g_current_lut, DestAddress, NS) != HAL_OK) {
+		Error_Handler();
+	}
+	__HAL_TIM_ENABLE_DMA(&htim2, TIM_DMA_CC1);
 
 	HAL_GPIO_EXTI_IRQHandler(Button0_Pin); // Clear interrupt flags
 }
