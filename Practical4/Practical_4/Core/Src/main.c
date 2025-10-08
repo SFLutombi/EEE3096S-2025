@@ -15,13 +15,23 @@
   *
   ******************************************************************************
   */
+/*
+Link: 
+Group Number: 19
+Group members: LTMSIM001 & MDLYAH001
+
+
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+//include lookup tables
+//#include "luts.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+//for strlen in display_waveform
+#include <string.h>
 #include "stm32f4xx.h"
 #include "lcd_stm32f4.h"
 /* USER CODE END Includes */
@@ -33,10 +43,22 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-// Configuration values
-#define NS             256U           // Number of samples in LUT (>= 128)
-#define TIM2CLK        16000000UL     // TIM2 clock frequency (see .ioc)
-#define F_SIGNAL       440UL          // Output analog signal frequency (Hz)
+// TODO: Add values for below variables
+//Task 2
+#define NS     128   // Number of samples in LUT
+#define TIM2CLK  16000000 // STM Clock frequency: is 16MHz
+#define F_SIGNAL  0.5	// Frequency of output analog signal is 100Hz target to help with noisy targets
+
+//defining debounce delay for the button press in ms
+#define DEBOUNCE_DELAY 200
+
+
+//defining enum to easily track the waveform
+typedef enum {
+	WAVE_SINE, WAVE_SAW, WAVE_TRIANGLE, WAVE_PIANO, WAVE_GUITAR, WAVE_DRUM, NUM_WAVEFORMS
+} WaveformType;
+
+
 
 /* USER CODE END PD */
 
@@ -51,24 +73,39 @@ TIM_HandleTypeDef htim3;
 DMA_HandleTypeDef hdma_tim2_ch1;
 
 /* USER CODE BEGIN PV */
-// Lookup tables (12-bit: 0..4095)
-uint32_t Sin_LUT[NS];
-uint32_t Saw_LUT[NS];
-uint32_t Triangle_LUT[NS];
-uint32_t Piano_LUT[NS];
-uint32_t Guitar_LUT[NS];
-uint32_t Drum_LUT[NS];
+// TODO: Add code for global variables, including LUTs
+//Task 1
+//these values were produced using lookup tables in python code, each has a minimum of 128 values
+uint32_t Sin_LUT[NS] = {2048, 2148, 2248, 2348, 2447, 2545, 2642, 2737, 2831, 2923, 3013, 3100, 3185, 3267, 3346, 3423, 3495, 3565, 3630, 3692, 3750, 3804, 3853, 3898, 3939, 3975, 4007, 4034, 4056, 4073, 4085, 4093, 4095, 4093, 4085, 4073, 4056, 4034, 4007, 3975, 3939, 3898, 3853, 3804, 3750, 3692, 3630, 3565, 3495, 3423, 3346, 3267, 3185, 3100, 3013, 2923, 2831, 2737, 2642, 2545, 2447, 2348, 2248, 2148, 2048, 1947, 1847, 1747, 1648, 1550, 1453, 1358, 1264, 1172, 1082, 995, 910, 828, 749, 672, 600, 530, 465, 403, 345, 291, 242, 197, 156, 120, 88, 61, 39, 22, 10, 2, 0, 2, 10, 22, 39, 61, 88, 120, 156, 197, 242, 291, 345, 403, 465, 530, 600, 672, 749, 828, 910, 995, 1082, 1172, 1264, 1358, 1453, 1550, 1648, 1747, 1847, 1947};
+uint32_t Saw_LUT[NS] = {0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800, 832, 864, 896, 928, 960, 992, 1024, 1056, 1088, 1120, 1152, 1184, 1216, 1248, 1280, 1312, 1344, 1376, 1408, 1440, 1472, 1504, 1536, 1568, 1600, 1632, 1664, 1696, 1728, 1760, 1792, 1824, 1856, 1888, 1920, 1952, 1984, 2016, 2048, 2079, 2111, 2143, 2175, 2207, 2239, 2271, 2303, 2335, 2367, 2399, 2431, 2463, 2495, 2527, 2559, 2591, 2623, 2655, 2687, 2719, 2751, 2783, 2815, 2847, 2879, 2911, 2943, 2975, 3007, 3039, 3071, 3103, 3135, 3167, 3199, 3231, 3263, 3295, 3327, 3359, 3391, 3423, 3455, 3487, 3519, 3551, 3583, 3615, 3647, 3679, 3711, 3743, 3775, 3807, 3839, 3871, 3903, 3935, 3967, 3999, 4031, 4063};
+uint32_t Triangle_LUT[NS] = {0, 64, 128, 192, 256, 320, 384, 448, 512, 576, 640, 704, 768, 832, 896, 960, 1024, 1088, 1152, 1216, 1280, 1344, 1408, 1472, 1536, 1600, 1664, 1728, 1792, 1856, 1920, 1984, 2048, 2111, 2175, 2239, 2303, 2367, 2431, 2495, 2559, 2623, 2687, 2751, 2815, 2879, 2943, 3007, 3071, 3135, 3199, 3263, 3327, 3391, 3455, 3519, 3583, 3647, 3711, 3775, 3839, 3903, 3967, 4031, 4095, 4031, 3967, 3903, 3839, 3775, 3711, 3647, 3583, 3519, 3455, 3391, 3327, 3263, 3199, 3135, 3071, 3007, 2943, 2879, 2815, 2751, 2687, 2623, 2559, 2495, 2431, 2367, 2303, 2239, 2175, 2111, 2048, 1984, 1920, 1856, 1792, 1728, 1664, 1600, 1536, 1472, 1408, 1344, 1280, 1216, 1152, 1088, 1024, 960, 896, 832, 768, 704, 640, 576, 512, 448, 384, 320, 256, 192, 128, 64};
+uint32_t Piano_LUT[NS] = {4094, 4095, 4092, 4085, 4072, 4052, 4028, 4001, 3971, 3937, 3898, 3853, 3803, 3750, 3690, 3624, 3554, 3481, 3401, 3313, 3221, 3128, 3032, 2932, 2829, 2722, 2613, 2505, 2397, 2286, 2174, 2061, 1946, 1831, 1718, 1606, 1495, 1387, 1283, 1181, 1081, 985, 891, 799, 711, 628, 550, 477, 410, 346, 285, 233, 186, 146, 110, 79, 52, 30, 15, 6, 1, 0, 3, 12, 27, 47, 71, 100, 132, 169, 209, 254, 304, 360, 419, 479, 543, 608, 675, 745, 814, 883, 954, 1026, 1098, 1170, 1241, 1312, 1383, 1451, 1517, 1580, 1640, 1700, 1756, 1809, 1857, 1901, 1942, 1980, 2015, 2046, 2073, 2094, 2112, 2128, 2141, 2151, 2157, 2160, 2160, 2155, 2147, 2136, 2121, 2102, 2081, 2056, 2028, 2000, 1971, 1939, 1905, 1873, 1840, 1806, 1772, 1737};
+uint32_t Guitar_LUT[NS] = {1524, 1425, 1321, 1201, 1076, 965, 874, 792, 716, 646, 583, 536, 515, 500, 471, 435, 411, 390, 363, 326, 279, 232, 202, 183, 159, 130, 105, 71, 35, 10, 2, 0, 8, 37, 92, 174, 276, 383, 469, 537, 614, 69};
+uint32_t Drum_LUT[NS] = {
+  0, 188, 150, 75, 274, 682, 951, 1091, 1338, 1456, 1489, 1924, 2381, 2182, 1612, 1075,
+  838, 1209, 1730, 2031, 2617, 3289, 3214, 2655, 2494, 2966, 3423, 3176, 2649, 2590, 2816, 2945,
+  2811, 2332, 2144, 2730, 3439, 3864, 4095, 3950, 3740, 3977, 3945, 3165, 2601, 2811, 3155, 3235,
+  3203, 3122, 3117, 3278, 3461, 3321, 2778, 2322, 2203, 2064, 2176, 2983, 3773, 3998, 3842, 3267,
+  2655, 2424, 2193, 2219, 2864, 3278, 3203, 3085, 2837, 2794, 2913, 2429, 2037, 2504, 2875, 2848,
+  2880, 2606, 2053, 1671, 1537, 1945, 2746, 2934, 2418, 1983, 1790, 1714, 1929, 2085, 1542, 774,
+  774, 1370, 1773, 1628, 1134, 1016, 1483, 1870, 2069, 2316, 2236, 1730, 1182, 688, 430, 591,
+  983, 1424, 1704, 1698, 1526, 1322, 1231, 1263, 978, 441, 408, 844, 1000, 876, 967, 1037
+};
 
-// Current waveform selection
-static volatile uint8_t g_wave_index = 0;  // 0..5
-static volatile uint32_t *g_current_lut = Sin_LUT;
+//global variables for waveform switching needed for task 5
+WaveformType current_waveform = WAVE_SINE;
+const uint32_t* current_lut = Sin_LUT;
+const char* waveform_names[] = {"Sine", "Sawtooth", "Triangle", "Piano", "Guitar", "Drum"};
 
+//global variable for debouncing
+static uint32_t last_tick = 0;
 
-
-
-
-// Equation to calculate TIM2_Ticks: TIM2CLK / (NS * F_SIGNAL)
-uint32_t TIM2_Ticks = (uint32_t)((TIM2CLK + (NS * F_SIGNAL / 2)) / (NS * F_SIGNAL)); // rounded
+// TODO: Equation to calculate TIM2_Ticks
+//Task 3
+//tim2_ticks= Clock freq/ freq output signal x number of samples in lut: 16000000/1000x128 = 125-1 ticks
+// TIM2_Ticks (ARR) = (TIM2CLK / F_sample) - 1
+// TIM2_Ticks = (16,000,000 / (1000 * 128)) - 1 = 125 - 1 = 124
+uint32_t TIM2_Ticks = (TIM2CLK /(F_SIGNAL*NS)) - 1; // How often to write new LUT value
 uint32_t DestAddress = (uint32_t) &(TIM3->CCR3); // Write LUT TO TIM3->CCR3 to modify PWM duty cycle
 
 
@@ -80,57 +117,30 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
+
+
 /* USER CODE BEGIN PFP */
 void EXTI0_IRQHandler(void);
+
+//helps to display LCD
+void display_waveform(const char* name);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-#include <math.h>
-
-static void Generate_LUTs(void){
-  for (uint32_t i = 0; i < NS; i++){
-    float phase = (2.0f * 3.14159265358979f * (float)i) / (float)NS;
-
-    // Sine 0..4095
-    float s = sinf(phase);
-    Sin_LUT[i] = (uint32_t)(2047.5f * (s + 1.0f));
-
-    // Saw 0..4095
-    Saw_LUT[i] = (uint32_t)((4095.0f * (float)i) / (float)(NS - 1));
-
-    // Triangle 0..4095
-    if (i < (NS/2)){
-      Triangle_LUT[i] = (uint32_t)((4095.0f * (2.0f * (float)i)) / (float)(NS - 1));
-    } else {
-      float j = (float)(i - NS/2);
-      Triangle_LUT[i] = (uint32_t)(4095.0f - (4095.0f * (2.0f * j)) / (float)(NS - 1));
+void display_waveform(const char* name) {
+    lcd_command(0xC0); //moves cursor to the second line of the LCD
+    //lcd_putstring("Waveform: ");
+    lcd_putstring((char*)name);  //prints waveforms name
+    //clear the rest of the line if the new name is shorter
+    if (strlen(name) < 10) {  //10 character spaces for waveform name
+        for(int i = 0; i < (10 - strlen(name)); i++) {
+            lcd_putchar(' ');
+        }
     }
-
-    // Placeholder musical timbres (replace with .wav-derived tables for Task 1.2)
-    float piano = 0.8f * sinf(phase) + 0.2f * sinf(2.0f * phase);
-    Piano_LUT[i] = (uint32_t)(2047.5f * (piano + 1.0f));
-
-    float guitar = 0.7f * sinf(phase) + 0.2f * sinf(3.0f * phase) + 0.1f * sinf(5.0f * phase);
-    Guitar_LUT[i] = (uint32_t)(2047.5f * (guitar + 1.0f));
-
-    float drum = 0.6f * sinf(phase) + 0.25f * sinf(2.7f * phase) + 0.15f * sinf(5.3f * phase);
-    Drum_LUT[i] = (uint32_t)(2047.5f * (drum + 1.0f));
-  }
 }
 
-static const char* WaveName(uint8_t idx){
-  switch(idx){
-    case 0: return "Sine";
-    case 1: return "Saw";
-    case 2: return "Tri";
-    case 3: return "Piano";
-    case 4: return "Guitar";
-    case 5: return "Drum";
-    default: return "?";
-  }
-}
 
 /* USER CODE END 0 */
 
@@ -142,21 +152,6 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  // Boot indicator: brief PB7 blinks using direct registers (no HAL)
-  // Enable GPIOB clock
-  RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
-  // Set PB7 as output
-  GPIOB->MODER &= ~(GPIO_MODER_MODER7);
-  GPIOB->MODER |= GPIO_MODER_MODER7_0;
-  // Blink a few times
-  for (volatile uint32_t k = 0; k < 3; ++k){
-    // PB7 high
-    GPIOB->BSRR = GPIO_BSRR_BS7;
-    for (volatile uint32_t d = 0; d < 200000; ++d) { __NOP(); }
-    // PB7 low
-    GPIOB->BSRR = GPIO_BSRR_BR7;
-    for (volatile uint32_t d = 0; d < 200000; ++d) { __NOP(); }
-  }
 
   /* USER CODE END 1 */
 
@@ -182,27 +177,27 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-  Generate_LUTs();
-  g_wave_index = 0;
-  g_current_lut = Sin_LUT;
-
-  // Initialize LCD and print waveform name
+  //initialise LCD
   init_LCD();
   lcd_command(CLEAR);
-  lcd_putstring("Wave: ");
-  lcd_putstring((char*)WaveName(g_wave_index));
 
-  // Start PWM on TIM3 CH3
-  if (HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_3) != HAL_OK) { Error_Handler(); }
+  //Task 4
+  // TODO: Start TIM3 in PWM mode on channel 3
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_3);
+  // TODO: Start TIM2 in Output Compare (OC) mode on channel 1
+  HAL_TIM_OC_Start(&htim2, TIM_CHANNEL_1);
 
-  // Start TIM2 OC on CH1
-  if (HAL_TIM_OC_Start(&htim2, TIM_CHANNEL_1) != HAL_OK) { Error_Handler(); }
+  // TODO: Start DMA in IT mode on TIM2->CH1. Source is LUT and Dest is TIM3->CCR3; start with Sine LUT
+  HAL_DMA_Start_IT(&hdma_tim2_ch1, (uint32_t)current_lut, DestAddress, NS);
 
-  // Start DMA circular transfer: LUT -> TIM3->CCR3
-  if (HAL_DMA_Start_IT(&hdma_tim2_ch1, (uint32_t)g_current_lut, DestAddress, NS) != HAL_OK) { Error_Handler(); }
+  // TODO: Write current waveform to LCD(Sine is the first waveform)
+  display_waveform(waveform_names[current_waveform]);
 
-  // Enable TIM2 CC1 DMA request
+  // TODO: Enable DMA (start transfer from LUT to CCR)
+  //uses HAL ENABLE DMA to start DMA transfer
+  ////enables TIM2_CH1 to trigger DMA request
   __HAL_TIM_ENABLE_DMA(&htim2, TIM_DMA_CC1);
+
 
   /* USER CODE END 2 */
 
@@ -213,13 +208,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    // Heartbeat blink every ~250ms
-    static uint32_t last_toggle = 0;
-    uint32_t now = HAL_GetTick();
-    if ((now - last_toggle) >= 250U) {
-      last_toggle = now;
-      HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_7);
-    }
   }
   /* USER CODE END 3 */
 }
@@ -287,7 +275,8 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 0;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = TIM2_Ticks - 1;
+  //set to tim2 ticks to control the DMA trigger frequency=124 using calculated TIM2_Ticks value
+  htim2.Init.Period = TIM2_Ticks;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -332,6 +321,9 @@ static void MX_TIM2_Init(void)
   hdma_tim2_ch1.Init.Priority = DMA_PRIORITY_HIGH;
   hdma_tim2_ch1.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
 
+  //set DMA peripheral address to TIM3->CCR3
+  //hdma_tim2_ch1.Init.PeriphAddress = DestAddress;
+
   if (HAL_DMA_Init(&hdma_tim2_ch1) != HAL_OK)
   {
       Error_Handler();
@@ -365,7 +357,8 @@ static void MX_TIM3_Init(void)
   htim3.Instance = TIM3;
   htim3.Init.Prescaler = 0;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 4095; // 12-bit resolution
+  //this timer value needs to match the 12bit DAC resolution=4095
+  htim3.Init.Period = 4095;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
@@ -436,6 +429,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
 
+
   // -------------------------------
   // LCD pins configuration
   // -------------------------------
@@ -472,59 +466,72 @@ static void MX_GPIO_Init(void)
   HAL_NVIC_SetPriority(EXTI0_IRQn, 2, 0);
   HAL_NVIC_EnableIRQ(EXTI0_IRQn);
 
-  // -------------------------------
-  // Heartbeat LED on PB7 (unused pin)
-  // -------------------------------
-  GPIO_InitStruct.Pin = GPIO_PIN_7;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
-
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
 void EXTI0_IRQHandler(void){
 
-	// Debounce using HAL_GetTick()
-	static uint32_t last = 0;
-	uint32_t now = HAL_GetTick();
-	if ((now - last) < 150) { // ~150ms debounce
-		HAL_GPIO_EXTI_IRQHandler(Button0_Pin); // Clear interrupt flags
-		return;
+	//check if interrupt pin is PA0(Button0_Pin)
+	if (__HAL_GPIO_EXTI_GET_IT(Button0_Pin) != RESET){
+		// TODO: Debounce using HAL_GetTick()
+		uint32_t current_tick = HAL_GetTick();
+
+		// TODO: Disable DMA transfer and abort IT, then start DMA in IT mode with new LUT and re-enable transfer
+		// HINT: Consider using C's "switch" function to handle LUT changes
+
+		if (current_tick - last_tick >= DEBOUNCE_DELAY){
+			last_tick = current_tick;
+			//goes to next waveform
+			current_waveform = (current_waveform + 1) % NUM_WAVEFORMS;
+
+			//select the correct lookup table
+		switch(current_waveform){
+			case WAVE_SINE:
+				current_lut = Sin_LUT;
+				break;
+			case WAVE_SAW:
+				current_lut = Saw_LUT;
+				break;
+			case WAVE_TRIANGLE:
+				current_lut = Triangle_LUT;
+				break;
+			case WAVE_PIANO:
+				current_lut = Piano_LUT;
+				break;
+			case WAVE_GUITAR:
+				current_lut = Guitar_LUT;
+				break;
+			case WAVE_DRUM:
+				current_lut = Drum_LUT;
+				break;
+			default:
+				current_lut = Sin_LUT;
+				break;
+			}
+
+		//stop DMA transfer before changing source address
+		//disable ch1 DMA to allow safe restart
+		__HAL_TIM_DISABLE_DMA(&htim2, TIM_DMA_CC1);
+
+		//stop previous DMA transfer
+		HAL_DMA_Abort_IT(&hdma_tim2_ch1);
+
+		//start new DMA transfer with new lut
+		//since DMA circular have to set up again with new source address
+		HAL_DMA_Start_IT(&hdma_tim2_ch1, (uint32_t)current_lut, DestAddress, NS);
+
+		//enable DMA request in timer again
+		__HAL_TIM_ENABLE_DMA(&htim2, TIM_DMA_CC1);
+
+		//update LCD with current waveform name
+		display_waveform(waveform_names[current_waveform]);
+		}
+
+		//clear interrupt flags
+		HAL_GPIO_EXTI_IRQHandler(Button0_Pin);
 	}
-	last = now;
 
-	// Disable DMA request and abort current transfer
-	__HAL_TIM_DISABLE_DMA(&htim2, TIM_DMA_CC1);
-	HAL_DMA_Abort(&hdma_tim2_ch1);
-
-	// Cycle waveform index and select new LUT
-	g_wave_index = (uint8_t)((g_wave_index + 1) % 6);
-	switch(g_wave_index){
-		case 0: g_current_lut = Sin_LUT; break;
-		case 1: g_current_lut = Saw_LUT; break;
-		case 2: g_current_lut = Triangle_LUT; break;
-		case 3: g_current_lut = Piano_LUT; break;
-		case 4: g_current_lut = Guitar_LUT; break;
-		case 5: g_current_lut = Drum_LUT; break;
-		default: g_current_lut = Sin_LUT; break;
-	}
-
-	// Update LCD with current waveform name
-	lcd_command(CLEAR);
-	lcd_putstring("Wave: ");
-	lcd_putstring((char*)WaveName(g_wave_index));
-
-	// Restart DMA with the new source LUT and re-enable TIM2 CC1 DMA
-	if (HAL_DMA_Start_IT(&hdma_tim2_ch1, (uint32_t)g_current_lut, DestAddress, NS) != HAL_OK) {
-		Error_Handler();
-	}
-	__HAL_TIM_ENABLE_DMA(&htim2, TIM_DMA_CC1);
-
-	HAL_GPIO_EXTI_IRQHandler(Button0_Pin); // Clear interrupt flags
 }
 /* USER CODE END 4 */
 
@@ -558,3 +565,4 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
+
